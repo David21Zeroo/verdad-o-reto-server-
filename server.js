@@ -5,19 +5,32 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
+
+// CONFIGURACIÓN CORS - Permite conexiones desde cualquier origen
 const io = socketIo(server, {
     cors: {
         origin: "*",
-        methods: ["GET", "POST"]
-    }
+        methods: ["GET", "POST"],
+        credentials: true
+    },
+    transports: ['websocket', 'polling']
 });
 
-// Servir archivos estáticos
+// Middleware CORS para Express
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    next();
+});
+
+// Servir archivos estáticos (opcional, para pruebas)
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Almacenamiento de salas en memoria (en producción usar Redis)
+// Almacenamiento de salas en memoria
 const rooms = new Map();
 
+// Generar código de sala aleatorio
 function generateRoomCode() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     let code;
@@ -30,6 +43,7 @@ function generateRoomCode() {
     return code;
 }
 
+// Conexión de Socket.IO
 io.on('connection', (socket) => {
     console.log('Nuevo cliente conectado:', socket.id);
 
@@ -87,13 +101,11 @@ io.on('connection', (socket) => {
         
         console.log(`${data.playerName} se unió a la sala ${data.roomCode}`);
         
-        // Notificar al nuevo jugador
         socket.emit('joined_room', {
             roomCode: data.roomCode,
             players: room.players
         });
         
-        // Notificar al anfitrión
         socket.to(data.roomCode).emit('player_joined', {
             playerName: data.playerName,
             players: room.players
@@ -106,12 +118,11 @@ io.on('connection', (socket) => {
         if (!room || room.players.length !== 2) return;
         
         const host = room.players.find(p => p.isHost);
-        if (host.id !== socket.id) return; // Solo el host puede iniciar
+        if (host.id !== socket.id) return;
         
         room.gameStarted = true;
         room.currentTurn = room.players[Math.floor(Math.random() * 2)].id;
         
-        // Inicializar scores
         room.players.forEach(p => {
             room.scores[p.id] = 0;
         });
@@ -129,7 +140,7 @@ io.on('connection', (socket) => {
         const room = rooms.get(data.roomCode);
         if (!room || !room.gameStarted) return;
         
-        if (room.currentTurn !== socket.id) return; // Solo el jugador en turno puede girar
+        if (room.currentTurn !== socket.id) return;
         
         const rotation = 1440 + Math.floor(Math.random() * 360);
         const winner = room.players[Math.floor(Math.random() * 2)].id;
@@ -189,7 +200,6 @@ io.on('connection', (socket) => {
             scores: room.scores
         });
         
-        // Cambiar turno al otro jugador
         const otherPlayer = room.players.find(p => p.id !== socket.id);
         room.currentTurn = otherPlayer.id;
         room.currentChallenge = null;
@@ -217,7 +227,6 @@ io.on('connection', (socket) => {
             playerName: player.name
         });
         
-        // Cambiar turno al otro jugador
         const otherPlayer = room.players.find(p => p.id !== socket.id);
         room.currentTurn = otherPlayer.id;
         room.currentChallenge = null;
@@ -243,7 +252,6 @@ io.on('connection', (socket) => {
                     });
                 }
                 
-                // Eliminar sala después de un tiempo si está vacía
                 setTimeout(() => {
                     const updatedRoom = rooms.get(socket.roomCode);
                     if (updatedRoom) {
@@ -257,12 +265,13 @@ io.on('connection', (socket) => {
                             console.log(`Sala ${socket.roomCode} eliminada por inactividad`);
                         }
                     }
-                }, 30000); // 30 segundos de gracia
+                }, 30000);
             }
         }
     });
 });
 
+// Puerto dinámico para Render
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Servidor corriendo en puerto ${PORT}`);
